@@ -58,6 +58,7 @@ typedef struct sphere {
 	pt center;
 	GLfloat radius;
 	color base_color;
+	GLfloat reflectance;
 };
 
 //@@***********************************************************************************@@
@@ -77,12 +78,14 @@ void animation_func(int val);
 //void draw_sphere(sphere s);
 //pt get_middle_point(pt v1, pt v2, sphere s);
 void calculate_rays(pt eye, pt light);
-sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue);
+void reflect_ray(pt origin, pt reflect_vector, color value);
+sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue, GLfloat reflectance);
 pt set_point(GLfloat x, GLfloat y, GLfloat z);
 color set_color(GLfloat r, GLfloat g, GLfloat b);
 GLfloat dot_product(pt v1, pt v2);
 GLfloat max_val(GLfloat x, GLfloat y);
 pt get_unit_vector(pt vector);
+GLfloat roundToTenths(GLfloat x);
 //triangle set_triangle(pt one, pt two, pt three);
 //pt get_triangle_midpoint(triangle t);
 //vector< color > get_phong_intensities(sphere s, light l);
@@ -96,14 +99,14 @@ int main(int argc, char **argv)
 	init_setup(WINDOW_XS, WINDOW_YS, WINDOW_NAME);
 
 	//Initialize Spheres
-	spheres.push_back(set_sphere(-25, -25, 75, 15, 0.80, 0.00, 0.00));
-	spheres.push_back(set_sphere(-25,  25, 75, 15, 0.22, 0.08, 0.69));
-	spheres.push_back(set_sphere( 25,  25, 75, 15, 0.95, 0.83, 0.00));
-	spheres.push_back(set_sphere( 25, -25, 75, 15, 0.00, 0.80, 0.00));
-	spheres.push_back(set_sphere(-25, -25, 25, 24, 0.30, 0.20, 0.70));
-	spheres.push_back(set_sphere(-25,  25, 25, 24, 1.00, 0.83, 0.00));
-	spheres.push_back(set_sphere( 25,  25, 25, 24, 0.00, 0.80, 0.00));
-	spheres.push_back(set_sphere( 25, -25, 25, 24, 0.90, 0.00, 0.00));
+	spheres.push_back(set_sphere(-25, -25, 75, 15, 0.80, 0.00, 0.00, 0.75));
+	spheres.push_back(set_sphere(-25,  25, 75, 15, 0.22, 0.08, 0.69, 0.50));
+	spheres.push_back(set_sphere( 25,  25, 75, 15, 0.95, 0.83, 0.00, 0.75));
+	spheres.push_back(set_sphere( 25, -25, 75, 15, 0.00, 0.80, 0.00, 0.50));
+	spheres.push_back(set_sphere(-25, -25, 25, 24, 0.30, 0.20, 0.70, 0.50));
+	spheres.push_back(set_sphere(-25,  25, 25, 24, 1.00, 0.83, 0.00, 0.50));
+	spheres.push_back(set_sphere( 25,  25, 25, 24, 0.00, 0.80, 0.00, 0.50));
+	spheres.push_back(set_sphere( 25, -25, 25, 24, 0.90, 0.00, 0.00, 0.50));
 
 	//Initialize pixel buffer
 	for (GLfloat x = -50.0; x <= 50.0; x += 0.1) {
@@ -222,8 +225,52 @@ void calculate_rays(pt eye, pt light) {
 			pixel_buffer[i].value.g += (spheres[nearest_j].base_color.g * intensity) + specular;
 			pixel_buffer[i].value.b += (spheres[nearest_j].base_color.b * intensity) + specular;
 
+			//Now reflect 
+			reflect_ray(set_point(x, y, z), reflect_vector, set_color(pixel_buffer[i].value.r * spheres[nearest_j].reflectance, pixel_buffer[i].value.g * spheres[nearest_j].reflectance, pixel_buffer[i].value.b * spheres[nearest_j].reflectance));
 		}
 	}
+}
+void reflect_ray(pt origin, pt reflect_vector, color value) {
+	GLfloat a, b, c, d, t, nearest_j, nearest_t, x, y, z;
+	//Find nearest intersect if any of the reflect vector to a sphere
+	for (int j = 0; j < spheres.size(); ++j) {
+		pt center = spheres[j].center;
+		GLfloat r = spheres[j].radius;
+
+		a = (reflect_vector.x * reflect_vector.x) + (reflect_vector.y * reflect_vector.y) + (reflect_vector.z * reflect_vector.z);
+		b = 2 * reflect_vector.x * (origin.x - center.x) + 2 * reflect_vector.y * (origin.y - center.y) + 2 * reflect_vector.z * (origin.z - center.z);
+		c = center.x*center.x + center.y*center.y + center.z*center.z + origin.x*origin.x + origin.y*origin.y + origin.z*origin.z + (-2*(center.x*origin.x + center.y*origin.y + center.z*origin.z)) - r*r;
+		d = (b*b)-(4*a*c);
+			
+		t = (-b-sqrt(d))/(2*a);
+			
+		if (t >= 0 && t <= 1 && t < nearest_t) {
+			nearest_t = t;
+			nearest_j = j;
+		}	
+	}
+	if (nearest_j >= 0) {
+		pt center      = spheres[nearest_j].center;
+		GLfloat r 	   = spheres[nearest_j].radius;
+		
+		//Find point on circle
+		x = roundToTenths(origin.x + (nearest_t * reflect_vector.x));
+		y = roundToTenths(origin.y + (nearest_t * reflect_vector.y));
+		z = roundToTenths(origin.z + (nearest_t * reflect_vector.z));
+
+		for (int i = 0; i < pixel_buffer.size(); ++i) {
+	
+			if (pixel_buffer[i].point.x == x && pixel_buffer[i].point.y == y && pixel_buffer[i].point.z == z) {
+				//For testing
+				pixel_buffer[i].value = set_color(1, 1, 0);
+			}
+		}
+	}
+}
+
+GLfloat roundToTenths(GLfloat x) {
+    x /=10;
+    return floor(x + 0.5) * 10;
 }
 
 GLfloat dot_product(pt v1, pt v2) {
@@ -328,7 +375,7 @@ pt get_unit_vector(pt v) {
 	return triangles;
 } */
 	
-sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue) {
+sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue, GLfloat reflectance) {
 	sphere s;
 	s.center.x = x;
 	s.center.y = y;
@@ -337,6 +384,7 @@ sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, 
 	s.base_color.r = red;
 	s.base_color.g = green;
 	s.base_color.b = blue;
+	s.reflectance = reflectance;
 	//s.triangles = build_sphere(s);
 	//s.colors = get_phong_intensities(s, )
 	return s;
