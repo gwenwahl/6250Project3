@@ -5,15 +5,17 @@
 *** WRITTEN By  : JKL
 */
 
-#include "stdafx.h"
+
 #include <stdio.h>               // standard C libraries
 #include <stdlib.h>
 #define _USE_MATH_DEFINES
 #include <cmath>
+#include <iostream>
+#include <algorithm>
 #include <time.h>
 #include <string.h>
 #include <vector>
-#include <GL/glut.h>             // GLUT library
+#include <GLUT/glut.h>             // GLUT library
 #include "cs_graphics_setup.h"   // Header for CS4250/5250/6250 courses
 
 using namespace std;
@@ -23,9 +25,8 @@ using namespace std;
 #define WINDOW_XS 200							// Window size
 #define WINDOW_YS 200
 #define WINDOW_NAME "Project 3 Ray Tracing - Gwen Wahl"	// Window name
-#define RECURSION_LEVEL 5
+#define RECURSION_LEVEL 3
 #define ANI_MSEC 10	 // gap between frames
-GLfloat tau = (1.0 + sqrtf(5.0)) / 2.0;
 
 //@@***********************************************************************************@@
 // Structures
@@ -48,18 +49,22 @@ typedef struct light {
 	color specular;
 };
 
+typedef struct pixel {
+	pt point;
+	color value;
+};
+
 typedef struct sphere {
 	pt center;
 	GLfloat radius;
 	color base_color;
-	vector<triangle> triangles;
-	vector<color> colors;
 };
 
 //@@***********************************************************************************@@
 // Global Variables
-sphere one, two, three, four, five, six, seven, eight;
+vector<sphere> spheres;
 light main_light;
+vector<pixel> pixel_buffer;
 //main_light.center.x = 0;
 //main_light.
 
@@ -68,14 +73,20 @@ light main_light;
 void display_func(void);
 void keyboard_func(unsigned char c, int x, int y);
 void animation_func(int val);
-void draw_sphere(sphere s);
-pt get_middle_point(pt v1, pt v2, sphere s);
+
+//void draw_sphere(sphere s);
+//pt get_middle_point(pt v1, pt v2, sphere s);
+void calculate_rays(pt eye, pt light);
 sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue);
 pt set_point(GLfloat x, GLfloat y, GLfloat z);
-triangle set_triangle(pt one, pt two, pt three);
-pt get_triangle_midpoint(triangle t);
-vector< color > get_phong_intensities(sphere s, light l);
-vector < triangle > build_sphere(sphere s);
+color set_color(GLfloat r, GLfloat g, GLfloat b);
+GLfloat dot_product(pt v1, pt v2);
+GLfloat max_val(GLfloat x, GLfloat y);
+pt get_unit_vector(pt vector);
+//triangle set_triangle(pt one, pt two, pt three);
+//pt get_triangle_midpoint(triangle t);
+//vector< color > get_phong_intensities(sphere s, light l);
+//vector < triangle > build_sphere(sphere s);
 
 //@@***********************************************************************************@@
 int main(int argc, char **argv)
@@ -84,14 +95,26 @@ int main(int argc, char **argv)
 
 	init_setup(WINDOW_XS, WINDOW_YS, WINDOW_NAME);
 
-	one = set_sphere(-25, -25, 25, 15, 0.8, 0, 0);
-	two = set_sphere(-25, 25, 25, 15, 0.22, 0.08, 0.69);
-	three = set_sphere(25, 25, 25, 15, 0.95, 0.83, 0);
-	four = set_sphere(25, -25, 25, 15, 0.0, 0.8, 0.0);
-	five = set_sphere(-25, -25, -25, 24, 0.3, 0.2, 0.7);
-	six = set_sphere(-25, 25, -25, 24, 1.0, 0.83, 0.0);
-	seven = set_sphere(25, 25, -25, 24, 0.0, 0.8, 0.0);
-	eight = set_sphere(25, -25, -25, 24, 0.9, 0, 0);
+	//Initialize Spheres
+	spheres.push_back(set_sphere(-25, -25, 75, 15, 0.80, 0.00, 0.00));
+	spheres.push_back(set_sphere(-25,  25, 75, 15, 0.22, 0.08, 0.69));
+	spheres.push_back(set_sphere( 25,  25, 75, 15, 0.95, 0.83, 0.00));
+	spheres.push_back(set_sphere( 25, -25, 75, 15, 0.00, 0.80, 0.00));
+	spheres.push_back(set_sphere(-25, -25, 25, 24, 0.30, 0.20, 0.70));
+	spheres.push_back(set_sphere(-25,  25, 25, 24, 1.00, 0.83, 0.00));
+	spheres.push_back(set_sphere( 25,  25, 25, 24, 0.00, 0.80, 0.00));
+	spheres.push_back(set_sphere( 25, -25, 25, 24, 0.90, 0.00, 0.00));
+
+	//Initialize pixel buffer
+	for (GLfloat x = -50.0; x <= 50.0; x += 0.1) {
+		for (GLfloat y = -50.0; y <= 50.0; y += 0.1) {
+			pixel p;
+			p.point = set_point(x, y, 0);
+			p.value = set_color(0.0, 0.0, 0.0);
+			pixel_buffer.push_back(p);
+		}
+	}
+	calculate_rays(set_point(0, 0, 10000), set_point(0, 0, 10010));
 
 	glutDisplayFunc(display_func);
 	glutKeyboardFunc(keyboard_func);
@@ -109,14 +132,12 @@ void display_func(void)
 	glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 	glMatrixMode(GL_MODELVIEW);
 
-	draw_sphere(one);
-	draw_sphere(two);
-	draw_sphere(three);
-	draw_sphere(four);
-	draw_sphere(five);
-	draw_sphere(six);
-	draw_sphere(seven);
-	draw_sphere(eight);
+	glBegin(GL_POINTS);
+	for (int i = 0; i < pixel_buffer.size(); ++i) {
+		glColor3f(pixel_buffer[i].value.r, pixel_buffer[i].value.g, pixel_buffer[i].value.b);
+		glVertex2f(pixel_buffer[i].point.x, pixel_buffer[i].point.y);
+	}
+	glEnd();
 
 	glFlush();
 
@@ -146,7 +167,82 @@ void keyboard_func(unsigned char c, int x, int y)
 	}  // end of switch
 
 }	// end of keyboard_func()
-vector<triangle> build_sphere(sphere s) {
+void calculate_rays(pt eye, pt light) {
+	//For each pixel in the scene
+	GLfloat dx, dy, dz, a, b, c, d, t, nearest_j, nearest_t, x, y, z;
+	for (int i = 0; i < pixel_buffer.size(); ++i) {
+		pt p = pixel_buffer[i].point;
+		
+		dx = p.x - eye.x;
+		dy = p.y - eye.y;
+		dz = p.z - eye.z;
+		nearest_j =   -1;
+		nearest_t =  999;
+
+		//Check each sphere, find nearest intersect if any
+		for (int j = 0; j < spheres.size(); ++j) {
+			pt center = spheres[j].center;
+			GLfloat r = spheres[j].radius;
+
+			a = (dx * dx) + (dy * dy) + (dz * dz);
+			b = 2 * dx * (eye.x - center.x) + 2 * dy * (eye.y - center.y) + 2 * dz * (eye.z - center.z);
+			c = center.x*center.x + center.y*center.y + center.z*center.z + eye.x*eye.x + eye.y*eye.y + eye.z*eye.z + (-2*(center.x*eye.x + center.y*eye.y + center.z*eye.z)) - r*r;
+
+			d = (b*b)-(4*a*c);
+			
+			t = (-b-sqrt(d))/(2*a);
+			
+			if (t >= 0 && t <= 1 && t < nearest_t) {
+				nearest_t = t;
+				nearest_j = j;
+			}	
+		}
+		if (nearest_j >= 0) {
+			//Color the pixel accordingly
+			//LIGHTING WILL BE HERE
+			pt center      = spheres[nearest_j].center;
+			GLfloat r 	   = spheres[nearest_j].radius;
+			//Find point on circle
+			x = eye.x + (nearest_t * dx);
+			y = eye.y + (nearest_t * dy);
+			z = eye.z + (nearest_t * dz);
+
+			pt normal_vector  = get_unit_vector(set_point((x - center.x) / r, (y - center.y) / r, (z - center.z) / r));
+			pt light_vector   = get_unit_vector(set_point(light.x - x, light.y - y, light.z - z));
+			pt eye_vector 	  = get_unit_vector(set_point(eye.x - x, eye.y - y, eye.z - z));
+			pt reflect_vector = get_unit_vector(set_point((2 * dot_product(light_vector, normal_vector) * normal_vector.x) - light_vector.x,(2 * dot_product(light_vector, normal_vector) * normal_vector.y) - light_vector.y, (2 * dot_product(light_vector, normal_vector) * normal_vector.z) - light_vector.z ));
+
+			GLfloat ambient   = 0.1;
+			GLfloat diffuse   = 0.8 * max_val(dot_product(light_vector, normal_vector), 0);
+			GLfloat specular  = 0.5 * pow(max_val(dot_product(reflect_vector, eye_vector), 0), 5);
+			GLfloat intensity = ambient + diffuse;
+			//Adding flat specular for white specularity
+			//Set color
+			pixel_buffer[i].value.r += (spheres[nearest_j].base_color.r * intensity) + specular;
+			pixel_buffer[i].value.g += (spheres[nearest_j].base_color.g * intensity) + specular;
+			pixel_buffer[i].value.b += (spheres[nearest_j].base_color.b * intensity) + specular;
+
+		}
+	}
+}
+
+GLfloat dot_product(pt v1, pt v2) {
+	return (v1.x * v2.x) + (v1.y * v2.y) + (v1.z * v2.z);
+}
+
+GLfloat max_val(GLfloat x, GLfloat y) {
+	if (x > y) {
+		return x;
+	} else {
+		return y;
+	}
+}
+
+pt get_unit_vector(pt v) {
+	GLfloat m = sqrtf((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
+	return set_point(v.x / m, v.y / m, v.z / m);
+}
+/*vector<triangle> build_sphere(sphere s) {
 	//First create the 12 vertices of an icosahedron
 	vector<pt> vertices;
 	vector<triangle> triangles;
@@ -230,7 +326,8 @@ vector<triangle> build_sphere(sphere s) {
 		triangles[k].three.z += s.center.z;
 	}
 	return triangles;
-}
+} */
+	
 sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue) {
 	sphere s;
 	s.center.x = x;
@@ -240,19 +337,9 @@ sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, 
 	s.base_color.r = red;
 	s.base_color.g = green;
 	s.base_color.b = blue;
-	s.triangles = build_sphere(s);
+	//s.triangles = build_sphere(s);
 	//s.colors = get_phong_intensities(s, )
 	return s;
-}
-void draw_sphere(sphere s) {
-	glColor3f(s.base_color.r, s.base_color.g, s.base_color.b);
-	for (int i = 0; i < s.triangles.size(); ++i) {
-		glBegin(GL_TRIANGLE_STRIP);
-		glVertex3f(s.triangles[i].one.x, s.triangles[i].one.y, s.triangles[i].one.z);
-		glVertex3f(s.triangles[i].two.x, s.triangles[i].two.y, s.triangles[i].two.z);
-		glVertex3f(s.triangles[i].three.x, s.triangles[i].three.y, s.triangles[i].three.z);
-		glEnd();
-	}
 }
 pt set_point(GLfloat x, GLfloat y, GLfloat z) {
 	pt p;
@@ -261,15 +348,22 @@ pt set_point(GLfloat x, GLfloat y, GLfloat z) {
 	p.z = z;
 	return p;
 }
-
+color set_color(GLfloat r, GLfloat g, GLfloat b) {
+	color c;
+	c.r = r;
+	c.g = g;
+	c.b = b;
+	return c;
+}
+/*
 triangle set_triangle(pt one, pt two, pt three) {
 	triangle t;
 	t.one = one;
 	t.two = two;
 	t.three = three;
 	return t;
-}
-
+} */
+/*
 pt get_middle_point(pt v1, pt v2, sphere s) {
 	pt middle;
 	//Points must be on the circle
@@ -291,4 +385,4 @@ pt get_triangle_midpoint(triangle t) {
 	m.y = (t.one.y + t.two.y + t.three.y) / 3;
 	m.z = (t.one.z + t.two.z + t.three.z) / 3;
 	return m;
-}
+} */

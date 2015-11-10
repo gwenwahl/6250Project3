@@ -15,7 +15,7 @@ void reshape_handler(int width, int height)
 	glViewport(0, 0, width, height);							// sets the viewport
 	glMatrixMode(GL_PROJECTION);								// projection matrix
 	glLoadIdentity();											// loads identity matrix
-	glOrtho(-50, 50, -50, 50, -50, 50);	// 3D parallel projection
+	glOrtho(-50, 50, -50, 50, 0, 100);							// 3D parallel projection
 }	// end of reshape_handler()
 
 	//@@***********************************************************************************@@
