@@ -12,8 +12,11 @@
 #include <cmath>
 #include <iostream>
 #include <algorithm>
+#include <deque>
 #include <time.h>
-#include <string.h>
+#include <unordered_map>
+#include <string>
+#include <limits>
 #include <vector>
 #include <GLUT/glut.h>             // GLUT library
 #include "cs_graphics_setup.h"   // Header for CS4250/5250/6250 courses
@@ -27,11 +30,16 @@ using namespace std;
 #define WINDOW_NAME "Project 3 Ray Tracing - Gwen Wahl"	// Window name
 #define RECURSION_LEVEL 3
 #define ANI_MSEC 10	 // gap between frames
+//Lighting defines
+#define AMBIENT 0.1
+#define DIFFUSE 0.7
+#define SPECULAR 0.5
+#define SPECULAR_EXPONENT 3
 
 //@@***********************************************************************************@@
 // Structures
 typedef struct pt {
-	GLfloat x, y, z;
+	GLdouble x, y, z;
 };
 
 typedef struct triangle {
@@ -39,14 +47,11 @@ typedef struct triangle {
 };
 
 typedef struct color {
-	GLfloat r, g, b;
+	GLdouble r, g, b;
 };
 
 typedef struct light {
-	pt center;
-	color ambient;
-	color diffuse;
-	color specular;
+	pt origin;
 };
 
 typedef struct pixel {
@@ -56,16 +61,24 @@ typedef struct pixel {
 
 typedef struct sphere {
 	pt center;
-	GLfloat radius;
+	GLdouble radius;
 	color base_color;
-	GLfloat reflectance;
+	GLdouble reflectance;
+};
+typedef struct ray {
+	pt origin;
+	pt direction;
+	color intensitys;
+	int total_reflections;
 };
 
 //@@***********************************************************************************@@
 // Global Variables
 vector<sphere> spheres;
 light main_light;
-vector<pixel> pixel_buffer;
+unordered_map<string, pixel> pixel_buffer;
+deque<ray>   ray_buffer;
+pt eye_point;
 //main_light.center.x = 0;
 //main_light.
 
@@ -77,15 +90,15 @@ void animation_func(int val);
 
 //void draw_sphere(sphere s);
 //pt get_middle_point(pt v1, pt v2, sphere s);
-void calculate_rays(pt eye, pt light);
+void process_rays(void);
 void reflect_ray(pt origin, pt reflect_vector, color value);
-sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue, GLfloat reflectance);
-pt set_point(GLfloat x, GLfloat y, GLfloat z);
-color set_color(GLfloat r, GLfloat g, GLfloat b);
-GLfloat dot_product(pt v1, pt v2);
-GLfloat max_val(GLfloat x, GLfloat y);
+sphere set_sphere(GLdouble x, GLdouble y, GLdouble z, GLdouble radius, GLdouble red, GLdouble green, GLdouble blue, GLdouble reflectance);
+pt set_point(GLdouble x, GLdouble y, GLdouble z);
+color set_color(GLdouble r, GLdouble g, GLdouble b);
+GLdouble dot_product(pt v1, pt v2);
+GLdouble max_val(GLdouble x, GLdouble y);
 pt get_unit_vector(pt vector);
-GLfloat roundToTenths(GLfloat x);
+GLdouble roundToTenths(GLdouble x);
 //triangle set_triangle(pt one, pt two, pt three);
 //pt get_triangle_midpoint(triangle t);
 //vector< color > get_phong_intensities(sphere s, light l);
@@ -108,16 +121,28 @@ int main(int argc, char **argv)
 	spheres.push_back(set_sphere( 25,  25, 25, 24, 0.00, 0.80, 0.00, 0.50));
 	spheres.push_back(set_sphere( 25, -25, 25, 24, 0.90, 0.00, 0.00, 0.50));
 
+	main_light.origin = set_point(0, 0, 10010);
+	eye_point = set_point(0, 0, 10000);
+
 	//Initialize pixel buffer
-	for (GLfloat x = -50.0; x <= 50.0; x += 0.1) {
-		for (GLfloat y = -50.0; y <= 50.0; y += 0.1) {
+	for (GLdouble x = -50.0; x <= 50.0; x += 0.1) {
+		for (GLdouble y = -50.0; y <= 50.0; y += 0.1) {
 			pixel p;
 			p.point = set_point(x, y, 0);
 			p.value = set_color(0.0, 0.0, 0.0);
-			pixel_buffer.push_back(p);
+
+			pixel_buffer[to_string(x) + "," + to_string(y)] = p;
+			//Fill initial ray buffer
+			ray r;
+			r.origin 	 = eye_point;
+			r.direction  = set_point(p.point.x - eye_point.x, p.point.y - eye_point.y, p.point.z - eye_point.z);
+			r.intensitys = set_color(1, 1, 1);
+			r.total_reflections = 0;
+			ray_buffer.push_back(r);
 		}
 	}
-	calculate_rays(set_point(0, 0, 10000), set_point(0, 0, 10010));
+	process_rays();
+
 
 	glutDisplayFunc(display_func);
 	glutKeyboardFunc(keyboard_func);
@@ -136,9 +161,12 @@ void display_func(void)
 	glMatrixMode(GL_MODELVIEW);
 
 	glBegin(GL_POINTS);
-	for (int i = 0; i < pixel_buffer.size(); ++i) {
-		glColor3f(pixel_buffer[i].value.r, pixel_buffer[i].value.g, pixel_buffer[i].value.b);
-		glVertex2f(pixel_buffer[i].point.x, pixel_buffer[i].point.y);
+	for (GLdouble x = -50.0; x <= 50.0; x += 0.1) {
+		for (GLdouble y = -50.0; y <= 50.0; y += 0.1) {
+			string key = to_string(x) + "," + to_string(y);
+			glColor3f(pixel_buffer[key].value.r, pixel_buffer[key].value.g, pixel_buffer[key].value.b);
+			glVertex2f(pixel_buffer[key].point.x, pixel_buffer[key].point.y);
+		}
 	}
 	glEnd();
 
@@ -170,9 +198,81 @@ void keyboard_func(unsigned char c, int x, int y)
 	}  // end of switch
 
 }	// end of keyboard_func()
+void process_rays(void) {
+	GLdouble a, b, c, d, t, lowest_t;
+	int lowest_i;
+	sphere S;
+
+	//While there are rays to process
+	while(!ray_buffer.empty()) {
+		//Get ray to process
+		ray R = ray_buffer.front();
+		ray_buffer.pop_front();
+		
+		//INTERSECT SECTION
+		lowest_t = 9999999;
+		lowest_i = -1;
+		//See if ray intercepts any of the spheres
+		for (int i = 0; i < spheres.size(); ++i) {
+			S = spheres[i];
+
+			a = dot_product(R.direction, R.direction);
+			b = (2 * R.direction.x * (R.origin.x - S.center.x)) + (2 * R.direction.y * (R.origin.y - S.center.y)) + (2 * R.direction.z * (R.origin.z - S.center.z));
+			c = dot_product(S.center, S.center) + dot_product(R.origin, R.origin) + (-2 * dot_product(S.center, R.origin)) - S.radius * S.radius;
+
+			d =  (b * b) - (4 * a * c);
+			if ( d > 0 ) {
+				t = ((-1 * b) - sqrtf(d)) / (2 * a);
+				if ( t < lowest_t) {
+					lowest_t = t;
+					lowest_i = i;
+				}
+			}
+		}
+
+		//LIGHTING SECTION
+		if (lowest_i >= 0) {
+			S = spheres[lowest_i];
+			//Find point on circle
+			pt intersection = set_point(R.origin.x + (lowest_t * R.direction.x), R.origin.y + (lowest_t * R.direction.y) ,R.origin.z + (lowest_t * R.direction.z));
+			if (R.total_reflections == 0) {
+				//Perform Phong shading
+				pt normal_vector  = get_unit_vector(set_point((intersection.x - S.center.x) / S.radius, (intersection.y - S.center.y) / S.radius, (intersection.z - S.center.z) / S.radius));
+				pt light_vector   = get_unit_vector(set_point(main_light.origin.x - intersection.x, main_light.origin.y - intersection.y, main_light.origin.z - intersection.z));
+				pt eye_vector 	  = get_unit_vector(set_point(eye_point.x - intersection.x, eye_point.y - intersection.y, eye_point.z - intersection.z));
+				pt reflect_vector = get_unit_vector(set_point((2 * dot_product(light_vector, normal_vector) * normal_vector.x) - light_vector.x,(2 * dot_product(light_vector, normal_vector) * normal_vector.y) - light_vector.y, (2 * dot_product(light_vector, normal_vector) * normal_vector.z) - light_vector.z ));
+
+				GLdouble ambient   = AMBIENT;
+				GLdouble diffuse   = DIFFUSE  * max_val(dot_product(light_vector, normal_vector), 0);
+				GLdouble specular  = SPECULAR * pow(max_val(dot_product(reflect_vector, eye_vector), 0), SPECULAR_EXPONENT);
+				GLdouble intensity = ambient + diffuse;
+				//Adding flat specular for white specularity
+				//Set color
+				string key = to_string(roundToTenths(intersection.x)) + "," + to_string(roundToTenths(intersection.y));
+				if (pixel_buffer[key].value.r > 0.0 || pixel_buffer[key].value.g > 0.0 || pixel_buffer[key].value.b > 0.0) {
+					//Average colliding color values
+					pixel_buffer[key].value.r = (((spheres[lowest_i].base_color.r * intensity) + specular) + pixel_buffer[key].value.r) / 2;
+					pixel_buffer[key].value.g = (((spheres[lowest_i].base_color.g * intensity) + specular) + pixel_buffer[key].value.g) / 2;
+					pixel_buffer[key].value.b = (((spheres[lowest_i].base_color.b * intensity) + specular) + pixel_buffer[key].value.b) / 2;
+				} else {
+					//Set initial value
+					pixel_buffer[key].value.r += (spheres[lowest_i].base_color.r * intensity) + specular;
+					pixel_buffer[key].value.g += (spheres[lowest_i].base_color.g * intensity) + specular;
+					pixel_buffer[key].value.b += (spheres[lowest_i].base_color.b * intensity) + specular;
+				}
+			} else {
+				//Add precalculated intensity and reflect
+			}
+			if (R.total_reflections < RECURSION_LEVEL) {
+				//Reflect
+			} 
+		}
+	}
+}
+/*
 void calculate_rays(pt eye, pt light) {
 	//For each pixel in the scene
-	GLfloat dx, dy, dz, a, b, c, d, t, nearest_j, nearest_t, x, y, z;
+	GLdouble dx, dy, dz, a, b, c, d, t, nearest_j, nearest_t, x, y, z;
 	for (int i = 0; i < pixel_buffer.size(); ++i) {
 		pt p = pixel_buffer[i].point;
 		
@@ -185,7 +285,7 @@ void calculate_rays(pt eye, pt light) {
 		//Check each sphere, find nearest intersect if any
 		for (int j = 0; j < spheres.size(); ++j) {
 			pt center = spheres[j].center;
-			GLfloat r = spheres[j].radius;
+			GLdouble r = spheres[j].radius;
 
 			a = (dx * dx) + (dy * dy) + (dz * dz);
 			b = 2 * dx * (eye.x - center.x) + 2 * dy * (eye.y - center.y) + 2 * dz * (eye.z - center.z);
@@ -204,7 +304,7 @@ void calculate_rays(pt eye, pt light) {
 			//Color the pixel accordingly
 			//LIGHTING WILL BE HERE
 			pt center      = spheres[nearest_j].center;
-			GLfloat r 	   = spheres[nearest_j].radius;
+			GLdouble r 	   = spheres[nearest_j].radius;
 			//Find point on circle
 			x = eye.x + (nearest_t * dx);
 			y = eye.y + (nearest_t * dy);
@@ -215,10 +315,10 @@ void calculate_rays(pt eye, pt light) {
 			pt eye_vector 	  = get_unit_vector(set_point(eye.x - x, eye.y - y, eye.z - z));
 			pt reflect_vector = get_unit_vector(set_point((2 * dot_product(light_vector, normal_vector) * normal_vector.x) - light_vector.x,(2 * dot_product(light_vector, normal_vector) * normal_vector.y) - light_vector.y, (2 * dot_product(light_vector, normal_vector) * normal_vector.z) - light_vector.z ));
 
-			GLfloat ambient   = 0.1;
-			GLfloat diffuse   = 0.8 * max_val(dot_product(light_vector, normal_vector), 0);
-			GLfloat specular  = 0.5 * pow(max_val(dot_product(reflect_vector, eye_vector), 0), 5);
-			GLfloat intensity = ambient + diffuse;
+			GLdouble ambient   = 0.1;
+			GLdouble diffuse   = 0.8 * max_val(dot_product(light_vector, normal_vector), 0);
+			GLdouble specular  = 0.5 * pow(max_val(dot_product(reflect_vector, eye_vector), 0), 5);
+			GLdouble intensity = ambient + diffuse;
 			//Adding flat specular for white specularity
 			//Set color
 			pixel_buffer[i].value.r += (spheres[nearest_j].base_color.r * intensity) + specular;
@@ -226,16 +326,17 @@ void calculate_rays(pt eye, pt light) {
 			pixel_buffer[i].value.b += (spheres[nearest_j].base_color.b * intensity) + specular;
 
 			//Now reflect 
-			reflect_ray(set_point(x, y, z), reflect_vector, set_color(pixel_buffer[i].value.r * spheres[nearest_j].reflectance, pixel_buffer[i].value.g * spheres[nearest_j].reflectance, pixel_buffer[i].value.b * spheres[nearest_j].reflectance));
+			//reflect_ray(set_point(x, y, z), reflect_vector, set_color(pixel_buffer[i].value.r * spheres[nearest_j].reflectance, pixel_buffer[i].value.g * spheres[nearest_j].reflectance, pixel_buffer[i].value.b * spheres[nearest_j].reflectance));
 		}
 	}
-}
+} */
+	/*
 void reflect_ray(pt origin, pt reflect_vector, color value) {
-	GLfloat a, b, c, d, t, nearest_j, nearest_t, x, y, z;
+	GLdouble a, b, c, d, t, nearest_j, nearest_t, x, y, z;
 	//Find nearest intersect if any of the reflect vector to a sphere
 	for (int j = 0; j < spheres.size(); ++j) {
 		pt center = spheres[j].center;
-		GLfloat r = spheres[j].radius;
+		GLdouble r = spheres[j].radius;
 
 		a = (reflect_vector.x * reflect_vector.x) + (reflect_vector.y * reflect_vector.y) + (reflect_vector.z * reflect_vector.z);
 		b = 2 * reflect_vector.x * (origin.x - center.x) + 2 * reflect_vector.y * (origin.y - center.y) + 2 * reflect_vector.z * (origin.z - center.z);
@@ -251,7 +352,7 @@ void reflect_ray(pt origin, pt reflect_vector, color value) {
 	}
 	if (nearest_j >= 0) {
 		pt center      = spheres[nearest_j].center;
-		GLfloat r 	   = spheres[nearest_j].radius;
+		GLdouble r 	   = spheres[nearest_j].radius;
 		
 		//Find point on circle
 		x = roundToTenths(origin.x + (nearest_t * reflect_vector.x));
@@ -267,17 +368,16 @@ void reflect_ray(pt origin, pt reflect_vector, color value) {
 		}
 	}
 }
-
-GLfloat roundToTenths(GLfloat x) {
-    x /=10;
-    return floor(x + 0.5) * 10;
+*/
+GLdouble roundToTenths(GLdouble x) {
+	return GLdouble(int(x * 10)) / 10;
 }
 
-GLfloat dot_product(pt v1, pt v2) {
+GLdouble dot_product(pt v1, pt v2) {
 	return (v1.x * v2.x) + (v1.y * v2.y) + (v1.z * v2.z);
 }
 
-GLfloat max_val(GLfloat x, GLfloat y) {
+GLdouble max_val(GLdouble x, GLdouble y) {
 	if (x > y) {
 		return x;
 	} else {
@@ -286,7 +386,7 @@ GLfloat max_val(GLfloat x, GLfloat y) {
 }
 
 pt get_unit_vector(pt v) {
-	GLfloat m = sqrtf((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
+	GLdouble m = sqrtf((v.x * v.x) + (v.y * v.y) + (v.z * v.z));
 	return set_point(v.x / m, v.y / m, v.z / m);
 }
 /*vector<triangle> build_sphere(sphere s) {
@@ -310,7 +410,7 @@ pt get_unit_vector(pt v) {
 
 	//Confine vertices to circle
 	for (int i = 0; i < vertices.size(); ++i) {
-		GLfloat length = sqrtf((vertices[i].x * vertices[i].x) + (vertices[i].y * vertices[i].y) + (vertices[i].z * vertices[i].z));
+		GLdouble length = sqrtf((vertices[i].x * vertices[i].x) + (vertices[i].y * vertices[i].y) + (vertices[i].z * vertices[i].z));
 		vertices[i].x = ((vertices[i].x / length) * s.radius);
 		vertices[i].y = ((vertices[i].y / length) * s.radius);
 		vertices[i].z = ((vertices[i].z / length) * s.radius);
@@ -375,7 +475,7 @@ pt get_unit_vector(pt v) {
 	return triangles;
 } */
 	
-sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, GLfloat green, GLfloat blue, GLfloat reflectance) {
+sphere set_sphere(GLdouble x, GLdouble y, GLdouble z, GLdouble radius, GLdouble red, GLdouble green, GLdouble blue, GLdouble reflectance) {
 	sphere s;
 	s.center.x = x;
 	s.center.y = y;
@@ -389,14 +489,14 @@ sphere set_sphere(GLfloat x, GLfloat y, GLfloat z, GLfloat radius, GLfloat red, 
 	//s.colors = get_phong_intensities(s, )
 	return s;
 }
-pt set_point(GLfloat x, GLfloat y, GLfloat z) {
+pt set_point(GLdouble x, GLdouble y, GLdouble z) {
 	pt p;
 	p.x = x;
 	p.y = y;
 	p.z = z;
 	return p;
 }
-color set_color(GLfloat r, GLfloat g, GLfloat b) {
+color set_color(GLdouble r, GLdouble g, GLdouble b) {
 	color c;
 	c.r = r;
 	c.g = g;
@@ -415,11 +515,11 @@ triangle set_triangle(pt one, pt two, pt three) {
 pt get_middle_point(pt v1, pt v2, sphere s) {
 	pt middle;
 	//Points must be on the circle
-	GLfloat x = (v1.x + v2.x) / 2.0;
-	GLfloat y = (v1.y + v2.y) / 2.0;
-	GLfloat z = (v1.z + v2.z) / 2.0;
+	GLdouble x = (v1.x + v2.x) / 2.0;
+	GLdouble y = (v1.y + v2.y) / 2.0;
+	GLdouble z = (v1.z + v2.z) / 2.0;
 
-	GLfloat length = sqrtf((x * x) + (y * y) + (z * z));
+	GLdouble length = sqrtf((x * x) + (y * y) + (z * z));
 	middle.x = (x / length) * s.radius;
 	middle.y = (y / length) * s.radius;
 	middle.z = (z / length) * s.radius;
